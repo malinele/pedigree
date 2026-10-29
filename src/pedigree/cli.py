@@ -9,6 +9,7 @@ Exit codes:
 
 import argparse
 import hashlib
+import json
 import os
 import sys
 from collections.abc import Sequence
@@ -17,7 +18,8 @@ from pathlib import Path
 from pedigree import __version__
 from pedigree.attestation import SCHEMA, Attestation, sign, to_json, utc_now_iso
 from pedigree.gitio import GitError, notes_add, notes_show, read_commits
-from pedigree.policy import default_policy_toml
+from pedigree.policy import PolicyError, default_policy_toml, load_policy
+from pedigree.verify import Verdict, verify_range
 
 HMAC_KEY_ENV = "PEDIGREE_HMAC_KEY"
 POLICY_FILE = "pedigree.toml"
@@ -47,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub = subparsers.add_parser(name, help=help_text)
         if name == "attest":
             _configure_attest(sub)
+        elif name == "verify":
+            _configure_verify(sub)
         elif name == "policy-init":
             sub.add_argument("--force", action="store_true", help="overwrite an existing policy file")
     return parser
@@ -60,6 +64,65 @@ def _configure_attest(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("--contract-id", default="")
     sub.add_argument("--evidence", metavar="FILE", default=None, help="file whose sha256 is recorded")
     sub.add_argument("--force", action="store_true", help="overwrite an existing attestation")
+
+
+def _configure_verify(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument("range", metavar="RANGE", nargs="?", default=None, help="git revision range (default: HEAD)")
+    sub.add_argument("--policy", metavar="PATH", default=None, help=f"policy file (default: <repo>/{POLICY_FILE})")
+    sub.add_argument("--format", choices=["text", "json"], default="text", help="output format (default: text)")
+
+
+def _count_findings(verdicts: Sequence[Verdict], severity: str) -> int:
+    return sum(1 for v in verdicts for f in v.findings if f.severity == severity)
+
+
+def _format_text(verdicts: Sequence[Verdict]) -> str:
+    lines = [f"{v.commit.sha[:7]} {f.rule} {f.severity} {f.message}" for v in verdicts for f in v.findings]
+    attested = sum(1 for v in verdicts if v.attested)
+    errors = _count_findings(verdicts, "error")
+    warnings = _count_findings(verdicts, "warning")
+    lines.append(f"{len(verdicts)} commits, {attested} attested, {errors} errors, {warnings} warnings")
+    return "\n".join(lines)
+
+
+def _format_json(verdicts: Sequence[Verdict]) -> str:
+    payload = {
+        "summary": {
+            "commits": len(verdicts),
+            "attested": sum(1 for v in verdicts if v.attested),
+            "errors": _count_findings(verdicts, "error"),
+            "warnings": _count_findings(verdicts, "warning"),
+        },
+        "commits": [
+            {
+                "sha": v.commit.sha,
+                "author_type": v.author_type,
+                "attested": v.attested,
+                "signature_state": v.signature_state,
+                "findings": [{"rule": f.rule, "severity": f.severity, "message": f.message} for f in v.findings],
+            }
+            for v in verdicts
+        ],
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _run_verify(args: argparse.Namespace) -> int:
+    repo = Path(args.repo)
+    policy_path = Path(args.policy) if args.policy is not None else repo / POLICY_FILE
+    if not policy_path.is_file():
+        print(f"pedigree verify: policy file not found: {policy_path} (run `pedigree policy-init`)", file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    raw_key = os.environ.get(HMAC_KEY_ENV, "")
+    key = raw_key.encode("utf-8") if raw_key else None
+    try:
+        policy = load_policy(policy_path)
+        verdicts = verify_range(repo, args.range, policy, key)
+    except (PolicyError, GitError) as exc:
+        print(f"pedigree verify: {exc}", file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    print(_format_json(verdicts) if args.format == "json" else _format_text(verdicts))
+    return EXIT_VIOLATIONS if _count_findings(verdicts, "error") else EXIT_OK
 
 
 def _run_attest(args: argparse.Namespace) -> int:
@@ -128,6 +191,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     command: str = args.command
     if command == "attest":
         return _run_attest(args)
+    if command == "verify":
+        return _run_verify(args)
     if command == "policy-init":
         return _run_policy_init(args)
     print(f"pedigree {command}: not implemented yet")
