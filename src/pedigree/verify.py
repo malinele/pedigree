@@ -33,6 +33,7 @@ class Verdict:
     attested: bool
     signature_state: SignatureState
     findings: tuple[Finding, ...]
+    tool: str = ""
 
 
 def classify_author(commit: Commit, attestation: Attestation | None) -> AuthorType:
@@ -152,7 +153,8 @@ def _verify_commit(repo: Path, commit: Commit, policy: Policy, key: bytes | None
     for rule in policy.rules:
         if _rule_applies(rule, author_type, commit):
             findings.extend(_rule_findings(rule, commit, author_type, trusted, state))
-    return Verdict(commit, author_type, trusted is not None, state, tuple(findings))
+    tool = trusted.tool if trusted is not None else ""
+    return Verdict(commit, author_type, trusted is not None, state, tuple(findings), tool)
 
 
 def verify_range(repo: Path, rev_range: str | None, policy: Policy, key: bytes | None) -> list[Verdict]:

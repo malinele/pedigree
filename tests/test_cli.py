@@ -8,7 +8,6 @@ from pedigree.attestation import SCHEMA, Attestation, sign, to_json
 from pedigree.cli import main
 from pedigree.gitio import notes_add
 
-STUB_COMMANDS = ["report"]
 KEY_ENV = "PEDIGREE_HMAC_KEY"
 SECRET = "top-secret"
 CLAUDE = "Co-Authored-By: Claude <noreply@anthropic.com>"
@@ -86,19 +85,6 @@ def test_missing_subcommand_exits_with_usage_error() -> None:
     assert excinfo.value.code == 2
 
 
-@pytest.mark.parametrize("command", STUB_COMMANDS)
-def test_stub_subcommand_returns_2_and_prints_its_name(command: str, capsys: pytest.CaptureFixture[str]) -> None:
-    exit_code = main([command])
-
-    assert exit_code == 2
-    assert f"pedigree {command}: not implemented yet" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("command", STUB_COMMANDS)
-def test_repo_option_is_accepted(command: str, tmp_path: Path) -> None:
-    assert main(["--repo", str(tmp_path), command]) == 2
-
-
 def test_verify_empty_policy_exits_0(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     write_policy(repo, "")
 
@@ -173,12 +159,13 @@ def test_verify_json_shape(repo: Path, capsys: pytest.CaptureFixture[str]) -> No
 
     data = json.loads(capsys.readouterr().out)
     assert code == 1
+    assert data["version"] == 1
     assert data["summary"] == {"commits": 1, "attested": 0, "errors": 1, "warnings": 0}
     (entry,) = data["commits"]
     assert entry["sha"] == sha
     assert entry["author_type"] == "agent"
     assert entry["attested"] is False
-    assert entry["signature_state"] == "none"
+    assert entry["signature"] == "none"
     assert entry["findings"][0]["rule"] == "agent-src-needs-attestation"
     assert set(entry["findings"][0]) == {"rule", "severity", "message"}
 

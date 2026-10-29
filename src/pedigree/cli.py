@@ -9,7 +9,6 @@ Exit codes:
 
 import argparse
 import hashlib
-import json
 import os
 import sys
 from collections.abc import Sequence
@@ -18,7 +17,14 @@ from pathlib import Path
 from pedigree import __version__
 from pedigree.attestation import SCHEMA, Attestation, sign, to_json, utc_now_iso
 from pedigree.gitio import GitError, notes_add, notes_show, read_commits
-from pedigree.policy import PolicyError, default_policy_toml, load_policy
+from pedigree.policy import Policy, PolicyError, default_policy_toml, load_policy
+from pedigree.report import (
+    render_report,
+    render_summary_line,
+    render_verify_json,
+    render_verify_sarif,
+    render_verify_text,
+)
 from pedigree.verify import Verdict, verify_range
 
 HMAC_KEY_ENV = "PEDIGREE_HMAC_KEY"
@@ -51,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
             _configure_attest(sub)
         elif name == "verify":
             _configure_verify(sub)
+        elif name == "report":
+            _configure_report(sub)
         elif name == "policy-init":
             sub.add_argument("--force", action="store_true", help="overwrite an existing policy file")
     return parser
@@ -69,42 +77,16 @@ def _configure_attest(sub: argparse.ArgumentParser) -> None:
 def _configure_verify(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("range", metavar="RANGE", nargs="?", default=None, help="git revision range (default: HEAD)")
     sub.add_argument("--policy", metavar="PATH", default=None, help=f"policy file (default: <repo>/{POLICY_FILE})")
+    sub.add_argument(
+        "--format", choices=["text", "json", "sarif"], default="text", help="output format (default: text)"
+    )
+    sub.add_argument("--output", metavar="PATH", default=None, help="write the report to PATH (summary goes to stderr)")
+
+
+def _configure_report(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument("range", metavar="RANGE", nargs="?", default=None, help="git revision range (default: HEAD)")
+    sub.add_argument("--policy", metavar="PATH", default=None, help="optional policy file; adds findings counts")
     sub.add_argument("--format", choices=["text", "json"], default="text", help="output format (default: text)")
-
-
-def _count_findings(verdicts: Sequence[Verdict], severity: str) -> int:
-    return sum(1 for v in verdicts for f in v.findings if f.severity == severity)
-
-
-def _format_text(verdicts: Sequence[Verdict]) -> str:
-    lines = [f"{v.commit.sha[:7]} {f.rule} {f.severity} {f.message}" for v in verdicts for f in v.findings]
-    attested = sum(1 for v in verdicts if v.attested)
-    errors = _count_findings(verdicts, "error")
-    warnings = _count_findings(verdicts, "warning")
-    lines.append(f"{len(verdicts)} commits, {attested} attested, {errors} errors, {warnings} warnings")
-    return "\n".join(lines)
-
-
-def _format_json(verdicts: Sequence[Verdict]) -> str:
-    payload = {
-        "summary": {
-            "commits": len(verdicts),
-            "attested": sum(1 for v in verdicts if v.attested),
-            "errors": _count_findings(verdicts, "error"),
-            "warnings": _count_findings(verdicts, "warning"),
-        },
-        "commits": [
-            {
-                "sha": v.commit.sha,
-                "author_type": v.author_type,
-                "attested": v.attested,
-                "signature_state": v.signature_state,
-                "findings": [{"rule": f.rule, "severity": f.severity, "message": f.message} for f in v.findings],
-            }
-            for v in verdicts
-        ],
-    }
-    return json.dumps(payload, indent=2)
 
 
 def _run_verify(args: argparse.Namespace) -> int:
@@ -121,8 +103,44 @@ def _run_verify(args: argparse.Namespace) -> int:
     except (PolicyError, GitError) as exc:
         print(f"pedigree verify: {exc}", file=sys.stderr)
         return EXIT_ENVIRONMENT
-    print(_format_json(verdicts) if args.format == "json" else _format_text(verdicts))
-    return EXIT_VIOLATIONS if _count_findings(verdicts, "error") else EXIT_OK
+    return _emit_verify(args, repo, verdicts)
+
+
+def _count_errors(verdicts: Sequence[Verdict]) -> int:
+    return sum(1 for v in verdicts for f in v.findings if f.severity == "error")
+
+
+def _emit_verify(args: argparse.Namespace, repo: Path, verdicts: Sequence[Verdict]) -> int:
+    if args.format == "json":
+        text = render_verify_json(verdicts)
+    elif args.format == "sarif":
+        text = render_verify_sarif(verdicts, repo)
+    else:
+        text = render_verify_text(verdicts)
+    if args.output is None:
+        print(text)
+    else:
+        try:
+            Path(args.output).write_text(text + "\n", encoding="utf-8")
+        except OSError as exc:
+            print(f"pedigree verify: cannot write {args.output}: {exc}", file=sys.stderr)
+            return EXIT_ENVIRONMENT
+        print(render_summary_line(verdicts), file=sys.stderr)
+    return EXIT_VIOLATIONS if _count_errors(verdicts) else EXIT_OK
+
+
+def _run_report(args: argparse.Namespace) -> int:
+    repo = Path(args.repo)
+    raw_key = os.environ.get(HMAC_KEY_ENV, "")
+    key = raw_key.encode("utf-8") if raw_key else None
+    try:
+        policy = load_policy(Path(args.policy)) if args.policy is not None else Policy()
+        verdicts = verify_range(repo, args.range, policy, key)
+    except (PolicyError, GitError) as exc:
+        print(f"pedigree report: {exc}", file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    print(render_report(verdicts, args.format, include_findings=args.policy is not None))
+    return EXIT_OK
 
 
 def _run_attest(args: argparse.Namespace) -> int:
@@ -193,6 +211,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_attest(args)
     if command == "verify":
         return _run_verify(args)
+    if command == "report":
+        return _run_report(args)
     if command == "policy-init":
         return _run_policy_init(args)
     print(f"pedigree {command}: not implemented yet")
