@@ -17,6 +17,7 @@ from pathlib import Path
 from pedigree import __version__
 from pedigree.attestation import SCHEMA, Attestation, sign, to_json, utc_now_iso
 from pedigree.gitio import GitError, notes_add, notes_show, read_commits
+from pedigree.ingest import IngestError, load_run_evidence
 from pedigree.policy import Policy, PolicyError, default_policy_toml, load_policy
 from pedigree.report import (
     render_report,
@@ -66,12 +67,39 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _configure_attest(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("--commit", metavar="SHA", default=None, help="commit to attest (default: HEAD)")
-    sub.add_argument("--author-type", choices=["agent", "human"], required=True)
-    sub.add_argument("--tool", default="")
-    sub.add_argument("--model", default="")
-    sub.add_argument("--contract-id", default="")
+    sub.add_argument("--author-type", choices=["agent", "human"], default=None, help="required unless --from-cco-run")
+    sub.add_argument("--tool", default=None)
+    sub.add_argument("--model", default=None)
+    sub.add_argument("--contract-id", default=None)
     sub.add_argument("--evidence", metavar="FILE", default=None, help="file whose sha256 is recorded")
+    sub.add_argument(
+        "--from-cco-run",
+        metavar="DIR",
+        default=None,
+        help="fill tool, model, contract id and evidence from a guarded-runner run directory (implies agent)",
+    )
     sub.add_argument("--force", action="store_true", help="overwrite an existing attestation")
+
+
+def _check_attest_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.from_cco_run is None:
+        if args.author_type is None:
+            parser.error("the following arguments are required: --author-type")
+        return
+    conflicting = [
+        flag
+        for flag, value in (
+            ("--tool", args.tool),
+            ("--model", args.model),
+            ("--contract-id", args.contract_id),
+            ("--evidence", args.evidence),
+        )
+        if value is not None
+    ]
+    if conflicting:
+        parser.error(f"--from-cco-run cannot be combined with {', '.join(conflicting)}")
+    if args.author_type == "human":
+        parser.error("--from-cco-run implies --author-type agent")
 
 
 def _configure_verify(sub: argparse.ArgumentParser) -> None:
@@ -146,7 +174,18 @@ def _run_report(args: argparse.Namespace) -> int:
 def _run_attest(args: argparse.Namespace) -> int:
     repo = Path(args.repo)
     evidence_sha = ""
-    if args.evidence is not None:
+    tool: str = args.tool or ""
+    model: str = args.model or ""
+    contract_id: str = args.contract_id or ""
+    author_type: str = args.author_type or "agent"
+    if args.from_cco_run is not None:
+        try:
+            run = load_run_evidence(Path(args.from_cco_run))
+        except IngestError as exc:
+            print(f"pedigree attest: {exc}", file=sys.stderr)
+            return EXIT_ENVIRONMENT
+        tool, model, contract_id, evidence_sha = run.tool, run.model, run.contract_id, run.evidence_sha256
+    elif args.evidence is not None:
         try:
             evidence_sha = hashlib.sha256(Path(args.evidence).read_bytes()).hexdigest()
         except OSError as exc:
@@ -168,10 +207,10 @@ def _run_attest(args: argparse.Namespace) -> int:
         att = Attestation(
             schema=SCHEMA,
             commit=sha,
-            author_type=args.author_type,
-            tool=args.tool,
-            model=args.model,
-            contract_id=args.contract_id,
+            author_type=author_type,
+            tool=tool,
+            model=model,
+            contract_id=contract_id,
             evidence_sha256=evidence_sha,
             created_at=utc_now_iso(),
         )
@@ -205,9 +244,11 @@ def _run_policy_init(args: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return the process exit code."""
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     command: str = args.command
     if command == "attest":
+        _check_attest_args(parser, args)
         return _run_attest(args)
     if command == "verify":
         return _run_verify(args)
