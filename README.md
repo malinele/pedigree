@@ -71,3 +71,9 @@ pedigree attest --from-cco-run path/to/run-dir
 - [Policy reference](docs/policy.md)
 - [CI integration](docs/ci.md)
 - [Changelog](CHANGELOG.md)
+
+## License
+
+Pedigree is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+For commercial use, see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
+For contributions, see [CONTRIBUTING.md](CONTRIBUTING.md).
