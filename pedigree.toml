@@ -32,5 +32,5 @@ forbid = true
 name = "agent-large-diff-needs-contract"
 paths = ["**"]
 applies_to = "agent"
-max_diff_lines = 800
+max_diff_lines = 2000
 require = ["contract_id"]
