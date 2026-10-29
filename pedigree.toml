@@ -1,0 +1,36 @@
+# Pedigree policy. Evaluated by `pedigree verify`.
+
+[policy]
+# Branch glob patterns on which every commit must carry an attestation.
+# Empty (the default) switches branch enforcement off.
+require_attestation_branches = []
+
+# When true, an unsigned or unverifiable attestation counts as missing.
+signed_required = false
+
+# Rules: `paths` are globs matched against changed file paths ('**' spans
+# any number of directories). `applies_to` is "agent", "human" or "any".
+# `require` may list: attestation, signed_attestation,
+# human_review_trailer, contract_id.
+
+# Agent commits touching source code must be attested.
+[[rule]]
+name = "agent-src-needs-attestation"
+paths = ["src/**"]
+applies_to = "agent"
+require = ["attestation"]
+
+# Agents must never change CI configuration.
+[[rule]]
+name = "agent-no-ci-changes"
+paths = [".github/**"]
+applies_to = "agent"
+forbid = true
+
+# Agent commits changing more than 800 lines must reference a contract.
+[[rule]]
+name = "agent-large-diff-needs-contract"
+paths = ["**"]
+applies_to = "agent"
+max_diff_lines = 800
+require = ["contract_id"]
