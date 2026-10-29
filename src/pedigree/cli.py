@@ -17,8 +17,10 @@ from pathlib import Path
 from pedigree import __version__
 from pedigree.attestation import SCHEMA, Attestation, sign, to_json, utc_now_iso
 from pedigree.gitio import GitError, notes_add, notes_show, read_commits
+from pedigree.policy import default_policy_toml
 
 HMAC_KEY_ENV = "PEDIGREE_HMAC_KEY"
+POLICY_FILE = "pedigree.toml"
 
 EXIT_OK = 0
 EXIT_VIOLATIONS = 1
@@ -45,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub = subparsers.add_parser(name, help=help_text)
         if name == "attest":
             _configure_attest(sub)
+        elif name == "policy-init":
+            sub.add_argument("--force", action="store_true", help="overwrite an existing policy file")
     return parser
 
 
@@ -104,12 +108,28 @@ def _run_attest(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _run_policy_init(args: argparse.Namespace) -> int:
+    target = Path(args.repo) / POLICY_FILE
+    if target.exists() and not args.force:
+        print(f"pedigree policy-init: {target} already exists (use --force to overwrite)", file=sys.stderr)
+        return EXIT_VIOLATIONS
+    try:
+        target.write_text(default_policy_toml(), encoding="utf-8")
+    except OSError as exc:
+        print(f"pedigree policy-init: cannot write {target}: {exc}", file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    print(target)
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return the process exit code."""
     args = build_parser().parse_args(argv)
     command: str = args.command
     if command == "attest":
         return _run_attest(args)
+    if command == "policy-init":
+        return _run_policy_init(args)
     print(f"pedigree {command}: not implemented yet")
     return EXIT_USAGE
 
