@@ -47,9 +47,9 @@ Globs are split on `/` and matched segment by segment.
 
 | Pattern | Matches | Does not match |
 |---------|---------|----------------|
-| `src/**` | `src/a.py`, `src/x/y/b.py` | `lib/a.py` |
-| `**/*.py` | `a.py`, `src/a.py`, `src/x/b.py` | `src/a.txt` |
-| `docs/*.md` | `docs/a.md` | `docs/x/a.md` |
+| `src/**` | `src/a.py`, `src/x/y/b.py` | `lib/a.py` | <!-- driftwatch: ignore=path -->
+| `**/*.py` | `a.py`, `src/a.py`, `src/x/b.py` | `src/a.txt` | <!-- driftwatch: ignore=path -->
+| `docs/*.md` | `docs/a.md` | `docs/x/a.md` | <!-- driftwatch: ignore=path -->
 | `**` | every file | nothing |
 
 ### `require` values
@@ -146,7 +146,7 @@ applies_to = "human"
 require = ["attestation"]
 ```
 
-`release/*` matches `release/1.0` but not `release/1.0/hotfix`; use `release/**` for that. Run verify on the branch itself, not on a detached checkout, or the branch requirement is skipped.
+`release/*` matches `release/1.0` but not `release/1.0/hotfix`; use `release/**` for that. Run verify on the branch itself, not on a detached checkout, or the branch requirement is skipped. <!-- driftwatch: ignore=path -->
 
 ## Example 3: solo founder
 
