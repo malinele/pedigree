@@ -1,9 +1,10 @@
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from pedigree.attestation import SCHEMA, Attestation, sign, to_json
+from pedigree.attestation import MAX_NOTE_BYTES, SCHEMA, Attestation, sign, to_json
 from pedigree.gitio import Commit, notes_add
 from pedigree.policy import Policy, Rule
 from pedigree.verify import Verdict, classify_author, verify_range
@@ -425,3 +426,27 @@ def test_range_limits_commits(repo: Path) -> None:
     commit(repo, {"b.txt": "2\n"})
 
     assert len(verify_range(repo, "HEAD~2..HEAD", Policy(), None)) == 2
+
+
+def test_oversized_note_is_malformed_without_crash(repo: Path) -> None:
+    sha = commit(repo, {"src/a.py": "x\n"})
+    padding = "a" * (MAX_NOTE_BYTES + 1)
+    notes_add(repo, sha, json.dumps({"schema": SCHEMA, "padding": padding}), True)
+
+    verdict = head_verdict(repo)
+
+    malformed = [f for f in verdict.findings if f.rule == "attestation_malformed"]
+    assert len(malformed) == 1
+    assert malformed[0].severity == "error"
+    assert "size" in malformed[0].message
+    assert not verdict.attested
+
+
+def test_normal_size_note_still_parses(repo: Path) -> None:
+    sha = commit(repo, {"src/a.py": "x\n"})
+    attest(repo, sha)
+
+    verdict = head_verdict(repo)
+
+    assert "attestation_malformed" not in rules_hit(verdict)
+    assert verdict.attested

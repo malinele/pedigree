@@ -14,6 +14,10 @@ SCHEMA = "pedigree/1"
 AUTHOR_TYPES = ("human", "agent")
 
 
+# Upper bound on a note's UTF-8 size; larger notes are rejected before JSON parsing.
+MAX_NOTE_BYTES = 65536
+
+
 class AttestationError(ValueError):
     """An attestation document is malformed."""
 
@@ -65,6 +69,9 @@ def to_json(att: Attestation) -> str:
 
 
 def from_json(text: str) -> Attestation:
+    size = len(text.encode("utf-8"))
+    if size > MAX_NOTE_BYTES:
+        raise AttestationError(f"attestation exceeds the size cap ({size} > {MAX_NOTE_BYTES} bytes)")
     try:
         raw = json.loads(text)
     except json.JSONDecodeError as exc:
