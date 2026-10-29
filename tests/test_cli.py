@@ -4,7 +4,7 @@ import pytest
 
 from pedigree.cli import main
 
-STUB_COMMANDS = ["attest", "verify", "report", "policy-init"]
+STUB_COMMANDS = ["verify", "report", "policy-init"]
 
 
 def test_version_flag_prints_version(capsys: pytest.CaptureFixture[str]) -> None:
